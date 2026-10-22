@@ -30,21 +30,28 @@ npm run dev          # http://localhost:5173      traveller app
                      # http://localhost:5173/#console   airline console
 ```
 
-Backend (optional, not connected to the frontend yet):
+Backend (optional). With it, the app shows prices from the API and keeps limit orders on the server:
 
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env              # SKYTRADE_PROVIDER=mock works with no keys; amadeus needs free test keys
 uvicorn app.main:app --reload     # http://127.0.0.1:8000/docs
+
+# in another terminal
+cd frontend
+echo "VITE_API_URL=http://127.0.0.1:8000" > .env.local
+npm run dev
 ```
+
+Without `VITE_API_URL` the frontend uses its own simulated fares. If the API is set but does not answer, it falls back to the simulation and says so above the results.
 
 ## Important: what is real and what is simulated
 
 - **Real:** airports, coordinates, nonstop routes and which airlines serve each airport (OpenFlights data).
 - **Simulated:** fares and flight times. They are modelled from real distance, number of competing carriers, season and lead time. A fare in the app is not a bookable price.
-- **Not wired yet:** the frontend runs its own simulated fare engine and does not call the backend. The backend can already talk to the Amadeus Self-Service API (`SKYTRADE_PROVIDER=amadeus`), so connecting the two is the next step to get live prices.
+- **Live mode:** with `VITE_API_URL` set, search results and orders (create / cancel / status) go through the backend. The backend serves mock fares by default, or real Amadeus test fares with `SKYTRADE_PROVIDER=amadeus`. The price calendar and the "everywhere" board still use the simulation.
 - **Booking is disabled.** `issue_ticket()` returns a simulated reference. Nothing is ever purchased.
 - There is no authentication yet, and passenger/payment screens are demo forms.
 

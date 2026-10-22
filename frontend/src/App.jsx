@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { API, api, toResult } from "./api.js";
 import { RAW_AIRPORTS, RAW_ROUTES, RAW_CARRIERS, RAW_AIRLINES } from "./airportData.js";
 
 /* =====================================================================
@@ -366,7 +367,7 @@ const Path = ({ o }) => (
     <div className="d">{hm(o.dur)}</div>
     <div className="pathline">{o.stops ? <i style={{ left: `${clamp((o.leg1 / o.dur) * 100, 18, 80)}%` }} /> : null}</div>
     <div className="d" style={{ color: o.stops ? "var(--navy)" : "var(--teal)", fontWeight: 600 }}>
-      {o.stops ? `1 στάση · ${o.via}` : "Απευθείας"}
+      {o.stops ? `1 στάση${o.via && o.via !== "·" ? " · " + o.via : ""}` : "Απευθείας"}
     </div>
   </div>
 );
@@ -438,7 +439,28 @@ export default function SkyTrade() {
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 3400); return () => clearTimeout(t); }, [toast]);
   useEffect(() => { setFilters((f) => ({ ...f, carriers: [], maxPrice: 1e6 })); }, [origin, dest, date]);
 
-  const all = useMemo(() => buildResults(origin, dest, date, tick), [origin, dest, date, tick]);
+  // Live mode: real offers from the backend, refreshed every 30 s. Falls back to simulation on error.
+  const [liveOffers, setLiveOffers] = useState(null);
+  const [liveState, setLiveState] = useState(API ? "loading" : "off");
+  const [liveTick, setLiveTick] = useState(0);
+  useEffect(() => { if (!API) return; const t = setInterval(() => setLiveTick((x) => x + 1), 30000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    if (!API || origin === dest) return;
+    let dead = false;
+    const day = ymd(date);
+    setLiveState("loading");
+    Promise.all([api.search(origin, dest, day, 1), api.history(origin, dest, day).catch(() => ({ points: [] }))])
+      .then(([s, h]) => {
+        if (dead) return;
+        const hist = h.points.map((p) => p.price);
+        setLiveOffers(s.offers.map((o) => toResult(o, hist)));
+        setLiveState("ok");
+      })
+      .catch(() => { if (!dead) { setLiveOffers(null); setLiveState("error"); } });
+    return () => { dead = true; };
+  }, [origin, dest, date, liveTick]);
+  const simulated = useMemo(() => buildResults(origin, dest, date, tick), [origin, dest, date, tick]);
+  const all = liveState === "ok" && liveOffers ? liveOffers : simulated;
   const cheapest = useMemo(() => (all.length ? all.reduce((a, b) => (b.price < a.price ? b : a)) : null), [all]);
   const fastest = useMemo(() => (all.length ? all.reduce((a, b) => (b.dur < a.dur ? b : a)) : null), [all]);
   const score = (o) => o.price + (o.dur - (fastest?.dur || 0)) * 0.3 + o.stops * 30;
@@ -489,7 +511,7 @@ export default function SkyTrade() {
 
   useEffect(() => {
     setOrders((os) => os.map((o) => {
-      if (o.status !== "watching") return o;
+      if (o.status !== "watching" || o.serverId) return o;
       const pool = buildResults(o.origin, o.dest, new Date(o.dateISO), tick);
       const cand = (o.anyFlight ? pool : pool.filter((x) => x.id === o.offerId)).sort((a, b) => a.price - b.price)[0];
       if (cand && cand.price <= o.target) {
@@ -499,6 +521,21 @@ export default function SkyTrade() {
       return { ...o, now: cand ? cand.price : o.now };
     }));
   }, [tick]);
+
+  useEffect(() => {
+    if (!API) return;
+    const t = setInterval(() => {
+      api.listOrders(pax.email).then((list) => {
+        setOrders((os) => os.map((o) => {
+          const r = o.serverId && list.find((x) => x.id === o.serverId);
+          if (!r || (r.status === o.status && r.filled_price === o.filledPrice)) return o;
+          if (r.status === "filled") setToast(`Η εντολή εκτελέστηκε — ${o.origin}→${o.dest} στα ${eur(r.filled_price)}`);
+          return { ...o, status: r.status, filledPrice: r.filled_price, ref: r.booking_ref, filledOffer: o.filledOffer || o };
+        }));
+      }).catch(() => {});
+    }, 15000);
+    return () => clearInterval(t);
+  }, [pax.email]);
 
   const watching = orders.filter((o) => o.status === "watching").length;
   const open = orders.find((o) => o.id === openId);
@@ -512,6 +549,16 @@ export default function SkyTrade() {
     setPage("limit");
   };
   const place = () => {
+    if (API) {
+      api.createOrder({ user_email: pax.email, origin, destination: dest, depart_date: ymd(date), limit_price: target, watch_days: watchDays, max_stops: sel.stops || 0 })
+        .then((r) => {
+          setOrders((os) => [{ id: "s" + r.id, serverId: r.id, origin, dest, dateISO: ymd(date), offerId: sel.id, carrier: sel.carrier, airline: sel.airline, code: sel.code, anyFlight: sel.anyFlight, target, entry: r.entry_price ?? sel.price, now: r.entry_price ?? sel.price, watchDays, status: r.status, filledPrice: r.filled_price, ref: r.booking_ref, filledOffer: sel, pax: { ...pax } }, ...os]);
+          setToast(r.status === "filled" ? `Η εντολή εκτελέστηκε στα ${eur(r.filled_price)}` : `Εντολή ενεργή στο backend · θα αγοραστεί στα ${eur(target)}`);
+          setPage("orders");
+        })
+        .catch((e) => setToast("Η εντολή δεν δημιουργήθηκε: " + e.message));
+      return;
+    }
     setOrders((os) => [{ id: Date.now(), origin, dest, dateISO: ymd(date), offerId: sel.id, carrier: sel.carrier, airline: sel.airline, code: sel.code, anyFlight: sel.anyFlight, target, entry: sel.price, now: sel.price, watchDays, status: "watching", pax: { ...pax } }, ...os]);
     setToast(`Εντολή ενεργή · θα αγοραστεί στα ${eur(target)}`);
     setPage("orders");
@@ -761,7 +808,7 @@ export default function SkyTrade() {
                   </div>
                 </div>
 
-                <p className="sec-p" style={{ margin: "0 0 10px" }}>{shown.length} αποτελέσματα · τιμές ανά άτομο με φόρους</p>
+                <p className="sec-p" style={{ margin: "0 0 10px" }}>{shown.length} αποτελέσματα · τιμές ανά άτομο με φόρους · {liveState === "ok" ? "ζωντανές τιμές από το API" : liveState === "loading" ? "φόρτωση τιμών…" : liveState === "error" ? "το API δεν απαντά, δείχνω προσομοίωση" : "προσομοιωμένες τιμές"}</p>
 
                 {shown.map((o) => (
                   <div className="res" key={o.id}>
@@ -784,7 +831,7 @@ export default function SkyTrade() {
                           <div className="muted">
                             {o.id === cheapest.id ? <span className="tag tag-green">Φθηνότερη</span>
                               : o.seatsLeft < 4 ? <span className="tag tag-red">{o.seatsLeft} θέσεις</span>
-                                : o.stops ? <span className="tag tag-grey">{hm(o.layover)} στάση</span> : "σύνολο"}
+                                : o.stops ? <span className="tag tag-grey">{o.layover ? hm(o.layover) + " στάση" : "με στάση"}</span> : "σύνολο"}
                           </div>
                         </div>
                         <button className="btn btn-blue" onClick={() => buyNow(o)}>Κράτηση</button>
@@ -873,7 +920,7 @@ export default function SkyTrade() {
                   </span>
                   {filled
                     ? <button className="btn btn-blue" style={{ width: "auto" }} onClick={() => { setOpenId(o.id); setPage("ticket"); }}>Εισιτήριο</button>
-                    : <button className="btn btn-line" style={{ width: "auto" }} onClick={() => { setOrders((os) => os.filter((x) => x.id !== o.id)); setToast("Η εντολή ακυρώθηκε. Δεν χρεώθηκε τίποτα."); }}>Ακύρωση</button>}
+                    : <button className="btn btn-line" style={{ width: "auto" }} onClick={() => { const done = () => { setOrders((os) => os.filter((x) => x.id !== o.id)); setToast("Η εντολή ακυρώθηκε. Δεν χρεώθηκε τίποτα."); }; if (o.serverId) api.cancelOrder(o.serverId).then(done).catch((e) => setToast("Αποτυχία ακύρωσης: " + e.message)); else done(); }}>Ακύρωση</button>}
                 </div>
                 {!filled && (<>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 14 }}>
