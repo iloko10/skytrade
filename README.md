@@ -51,7 +51,7 @@ Without `VITE_API_URL` the frontend uses its own simulated fares. If the API is 
 
 - **Real:** airports, coordinates, nonstop routes and which airlines serve each airport (OpenFlights data).
 - **Simulated:** fares and flight times. They are modelled from real distance, number of competing carriers, season and lead time. A fare in the app is not a bookable price.
-- **Live mode:** with `VITE_API_URL` set, search results and orders (create / cancel / status) go through the backend. The backend serves mock fares by default, or real Amadeus test fares with `SKYTRADE_PROVIDER=amadeus`. The price calendar and the "everywhere" board still use the simulation.
+- **Live mode:** with `VITE_API_URL` set, search results and orders (create / cancel / status) go through the backend. The backend serves mock fares by default, or real Amadeus test fares with `SKYTRADE_PROVIDER=amadeus`. The price calendar also comes from the backend; the "everywhere" board still uses the simulation.
 - **Booking is disabled.** `issue_ticket()` returns a simulated reference. Nothing is ever purchased.
 - There is no authentication yet, and passenger/payment screens are demo forms.
 

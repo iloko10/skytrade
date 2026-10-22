@@ -496,6 +496,21 @@ export default function SkyTrade() {
     }).sort((a, b) => (ROUTES[b]?.length || 0) - (ROUTES[a]?.length || 0)).slice(0, 40);
   }, [query]);
 
+  // live calendar prices from the backend (days it has no fare for keep the simulated price)
+  const [liveCal, setLiveCal] = useState({});
+  useEffect(() => {
+    if (!API || page !== "calendar" || origin === dest) return;
+    let dead = false;
+    const first = new Date(calMonth.getFullYear(), calMonth.getMonth(), 1);
+    const start = first > TODAY ? first : addDays(1);
+    const days = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 0).getDate() - (start.getDate() - 1);
+    if (days < 1) return;
+    api.calendar(origin, dest, ymd(start), days)
+      .then((r) => { if (!dead) setLiveCal(Object.fromEntries(r.days.map((d) => [d.date, d.price]))); })
+      .catch(() => { if (!dead) setLiveCal({}); });
+    return () => { dead = true; };
+  }, [calMonth, origin, dest, page]);
+
   const calGrid = useMemo(() => {
     const first = new Date(calMonth.getFullYear(), calMonth.getMonth(), 1);
     const n = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 0).getDate();
@@ -503,11 +518,11 @@ export default function SkyTrade() {
     for (let i = 1; i <= n; i++) {
       const d = new Date(calMonth.getFullYear(), calMonth.getMonth(), i);
       const past = d <= TODAY;
-      cells.push({ d, price: past ? null : dayPrice(origin, dest, d), past });
+      cells.push({ d, price: past ? null : (API && liveCal[ymd(d)]) || dayPrice(origin, dest, d), past });
     }
     const ps = cells.filter((c) => c && c.price).map((c) => c.price);
     return { cells, min: ps.length ? Math.min(...ps) : 0 };
-  }, [calMonth, origin, dest]);
+  }, [calMonth, origin, dest, liveCal]);
 
   useEffect(() => {
     setOrders((os) => os.map((o) => {

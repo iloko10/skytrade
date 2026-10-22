@@ -22,6 +22,8 @@ export const api = {
     call(`/search?${qs({ origin, destination, depart_date: date, max_stops: maxStops })}`),
   history: (origin, destination, date) =>
     call(`/history?${qs({ origin, destination, depart_date: date })}`),
+  calendar: (origin, destination, start, days) =>
+    call(`/calendar?${qs({ origin, destination, start, days })}`),
   createOrder: (body) => call("/orders", { method: "POST", body: JSON.stringify(body) }),
   listOrders: (email) => call(`/orders?${qs({ user_email: email })}`),
   cancelOrder: (id) => call(`/orders/${id}`, { method: "DELETE" }),
